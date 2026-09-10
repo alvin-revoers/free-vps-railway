@@ -6,15 +6,18 @@ PORT=${PORT:-6080}
 RESOLUTION=${RESOLUTION:-1280x720x24}
 VNC_PASSWORD=${VNC_PASSWORD:-""}
 
+NOVNC="/opt/novnc"
+
 echo "=================================================="
-echo " Free VPS - Ubuntu XFCE4 + x11vnc + noVNC"
-echo " Screen Resolution: $RESOLUTION"
-echo " Web Port: $PORT"
-echo " Clipboard: ENABLED"
+echo " Starting Free VPS"
+echo " Ubuntu XFCE4 + Xvfb + x11vnc + noVNC"
+echo " Resolution : $RESOLUTION"
+echo " Web Port   : $PORT"
+echo " Clipboard  : ENABLED"
 echo "=================================================="
 
 # ==================================================
-# CLEAN OLD DISPLAY
+# CLEAN DISPLAY
 # ==================================================
 
 rm -f /tmp/.X0-lock
@@ -50,7 +53,7 @@ echo "Xvfb OK."
 # 2. START XFCE
 # ==================================================
 
-echo "[2/5] Starting XFCE..."
+echo "[2/5] Starting XFCE4..."
 
 export DISPLAY=:0
 
@@ -58,111 +61,93 @@ dbus-launch \
     --exit-with-session \
     startxfce4 &
 
-XFCE_PID=$!
-
 sleep 5
 
-echo "XFCE started."
+echo "XFCE4 OK."
 
 # ==================================================
-# 3. FORCE CLIPBOARD SUPPORT IN NOVNC
+# 3. PATCH NOVNC CLIPBOARD
 # ==================================================
 
-echo "[3/5] Patching noVNC Clipboard..."
+echo "[3/5] Patching noVNC clipboard..."
 
-NOVNC="/opt/novnc"
-VNC_HTML="$NOVNC/vnc.html"
+UI_JS="$NOVNC/app/ui.js"
+BASE_CSS="$NOVNC/app/styles/base.css"
 
-if [ ! -f "$VNC_HTML" ]; then
-    echo "ERROR: $VNC_HTML tidak ditemukan."
+if [ ! -f "$UI_JS" ]; then
+    echo "ERROR: $UI_JS tidak ditemukan."
     exit 1
 fi
 
 # --------------------------------------------------
-# Backup vnc.html
+# Backup original files
 # --------------------------------------------------
 
-if [ ! -f "$NOVNC/vnc.html.original" ]; then
-    cp "$VNC_HTML" "$NOVNC/vnc.html.original"
+if [ ! -f "$NOVNC/app/ui.js.original" ]; then
+    cp "$UI_JS" "$NOVNC/app/ui.js.original"
+fi
+
+if [ ! -f "$NOVNC/app/styles/base.css.original" ]; then
+    cp "$BASE_CSS" "$NOVNC/app/styles/base.css.original"
 fi
 
 # --------------------------------------------------
-# Pastikan tombol Clipboard ada
+# IMPORTANT:
+#
+# noVNC menjalankan:
+#
+#     UI.updateClipboard();
+#
+# Fungsi ini dapat menyembunyikan tombol clipboard
+# ketika browser Android mendukung Async Clipboard.
+#
+# Kita nonaktifkan pemanggilan tersebut supaya tombol
+# clipboard tetap tersedia.
 # --------------------------------------------------
 
-if ! grep -q 'id="noVNC_clipboard_button"' "$VNC_HTML"; then
-
-    echo "Clipboard button belum ada. Menambahkan..."
-
-    python3 - <<'PY'
+python3 - <<'PY'
 from pathlib import Path
 
-p = Path("/opt/novnc/vnc.html")
+p = Path("/opt/novnc/app/ui.js")
+
 s = p.read_text()
 
-marker = '<!-- Toggle fullscreen -->'
+old = "        UI.updateClipboard();"
 
-button = '''
-<!-- Forced Clipboard Button -->
-<input type="image"
-       alt="Clipboard"
-       src="app/images/clipboard.svg"
-       id="noVNC_clipboard_button"
-       class="noVNC_button"
-       title="Clipboard">
+new = """        // Clipboard fallback panel is intentionally kept enabled.
+        // Do not call UI.updateClipboard() because that function
+        // hides the clipboard button on browsers with Async Clipboard.
+        // UI.updateClipboard();"""
 
-<div class="noVNC_crosscenter">
-<div id="noVNC_clipboard" class="noVNC_panel">
-
-<div class="noVNC_heading">
-<img alt="" src="app/images/clipboard.svg">
-Clipboard
-</div>
-
-<p class="noVNC_subheading">
-Edit clipboard content in the textbox below.
-</p>
-
-<textarea id="noVNC_clipboard_text"
-          rows="5"></textarea>
-
-</div>
-</div>
-
-'''
-
-if marker in s:
-    s = s.replace(marker, button + marker)
+if old in s:
+    s = s.replace(old, new, 1)
+    print("OK: UI.updateClipboard() disabled.")
+else:
+    print("INFO: UI.updateClipboard() call already patched or not found.")
 
 p.write_text(s)
 PY
 
-fi
-
 # --------------------------------------------------
-# Pastikan Clipboard tidak disembunyikan oleh CSS
+# FORCE BUTTON VISIBLE
 # --------------------------------------------------
 
-CSS="$NOVNC/app/styles/base.css"
-
-if [ -f "$CSS" ]; then
-
-    if ! grep -q 'FORCE CLIPBOARD MOBILE' "$CSS"; then
-
-        cat >> "$CSS" <<'EOF'
+cat >> "$BASE_CSS" <<'EOF'
 
 /* ==================================================
-   FORCE CLIPBOARD MOBILE
+   FREE VPS - FORCE NOVNC CLIPBOARD BUTTON
    ================================================== */
 
-#noVNC_clipboard_button {
+#noVNC_control_bar #noVNC_clipboard_button {
     display: block !important;
     visibility: visible !important;
     opacity: 1 !important;
 }
 
-#noVNC_clipboard_button.noVNC_hidden {
+#noVNC_control_bar #noVNC_clipboard_button.noVNC_hidden {
     display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
 }
 
 #noVNC_clipboard {
@@ -178,16 +163,12 @@ if [ -f "$CSS" ]; then
 
 @media (max-width: 600px) {
 
-    #noVNC_clipboard_button {
+    #noVNC_control_bar #noVNC_clipboard_button {
         display: block !important;
         visibility: visible !important;
         opacity: 1 !important;
         width: 35px !important;
         height: 35px !important;
-    }
-
-    #noVNC_clipboard_button img {
-        display: block !important;
     }
 
     #noVNC_clipboard {
@@ -201,83 +182,17 @@ if [ -f "$CSS" ]; then
     }
 }
 
-/* FORCE CLIPBOARD MOBILE */
+/* END FREE VPS CLIPBOARD */
 
 EOF
 
-    fi
-
-fi
+echo "noVNC clipboard patch OK."
 
 # ==================================================
-# EXTRA JAVASCRIPT
-# Force clipboard button visibility
+# 4. START X11VNC
 # ==================================================
 
-cat > "$NOVNC/clipboard-force.js" <<'EOF'
-
-(function () {
-
-    function forceClipboard() {
-
-        const button =
-            document.getElementById("noVNC_clipboard_button");
-
-        const panel =
-            document.getElementById("noVNC_clipboard");
-
-        if (button) {
-
-            button.classList.remove("noVNC_hidden");
-
-            button.style.display = "block";
-            button.style.visibility = "visible";
-            button.style.opacity = "1";
-
-        }
-
-        if (panel) {
-
-            panel.style.zIndex = "9999";
-
-        }
-
-    }
-
-    // Immediately
-    forceClipboard();
-
-    // DOM may still be loading
-    setTimeout(forceClipboard, 500);
-    setTimeout(forceClipboard, 1500);
-    setTimeout(forceClipboard, 3000);
-
-    // Keep checking because noVNC changes classes
-    setInterval(forceClipboard, 2000);
-
-})();
-
-EOF
-
-# --------------------------------------------------
-# Inject JS into vnc.html
-# --------------------------------------------------
-
-if ! grep -q 'clipboard-force.js' "$VNC_HTML"; then
-
-    sed -i \
-        's#</body>#<script src="clipboard-force.js"></script>\n</body>#' \
-        "$VNC_HTML"
-
-fi
-
-echo "noVNC Clipboard patch OK."
-
-# ==================================================
-# 4. START x11vnc
-# ==================================================
-
-echo "[4/5] Starting x11vnc..."
+echo "[4/5] Starting x11vnc on port 5900..."
 
 if [ -n "$VNC_PASSWORD" ]; then
 
@@ -319,12 +234,12 @@ fi
 sleep 2
 
 # ==================================================
-# CHECK x11vnc
+# CHECK X11VNC
 # ==================================================
 
 if ! netstat -lnt 2>/dev/null | grep -q ":5900"; then
 
-    echo "ERROR: x11vnc gagal listen pada port 5900"
+    echo "ERROR: x11vnc gagal listen di port 5900."
 
     if [ -f /var/log/x11vnc.log ]; then
         cat /var/log/x11vnc.log
@@ -333,7 +248,7 @@ if ! netstat -lnt 2>/dev/null | grep -q ":5900"; then
     exit 1
 fi
 
-echo "x11vnc OK - port 5900."
+echo "x11vnc OK."
 
 # ==================================================
 # 5. START NOVNC
@@ -342,12 +257,12 @@ echo "x11vnc OK - port 5900."
 echo "[5/5] Starting noVNC..."
 
 echo "=================================================="
-echo " noVNC: http://0.0.0.0:$PORT"
-echo " VNC: localhost:5900"
-echo " Clipboard: ENABLED + FORCED"
+echo " noVNC     : $PORT"
+echo " VNC       : localhost:5900"
+echo " Clipboard : ENABLED"
 echo "=================================================="
 
-exec /opt/novnc/utils/novnc_proxy \
+exec "$NOVNC/utils/novnc_proxy" \
     --vnc localhost:5900 \
     --listen 0.0.0.0:$PORT \
     --web "$NOVNC"
