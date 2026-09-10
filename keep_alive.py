@@ -9,7 +9,7 @@ import datetime
 import sys
 
 # Replace with your actual Railway / Render / PaaS public URL
-TARGET_URL = sys.argv[1] if len(sys.argv) > 1 else "https://your-app.up.railway.app"
+TARGET_URL = sys.argv[1] if len(sys.argv) > 1 else "https://free-vps-railway-production-0067.up.railway.app/"
 INTERVAL_SECONDS = int(sys.argv[2]) if len(sys.argv) > 2 else 120  # Ping every 2 minutes
 
 def ping_server(url):
